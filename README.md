@@ -1,3 +1,5 @@
+![https://s3-us-west-1.amazonaws.com/aerospike-fd/wp-content/uploads/2016/10/](aerospike-logo.png)
+
 # Install
 
 ## git clone https://github.com/swig/swig.git
