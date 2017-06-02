@@ -1,43 +1,39 @@
 
-![https://s3-us-west-1.amazonaws.com/aerospike-fd/wp-content/uploads/2016/10/](./aerospike-logo.png)
+# PHP7, PHP7-FPM 전용 aerospike 모듈
 
 # Install
 
-## git clone https://github.com/swig/swig.git
+## SWIG
 
-cd swig
+```shell
+	git clone https://github.com/swig/swig.git
 
-./autogen.sh
+	cd swig
+	./autogen.sh
+	./configure
+	make
+	make install
+	cd ..
+```
 
-./configure
+## aerospike-client-c
 
-make
+```shell
+	git clone https://github.com/aerospike/aerospike-client-c.git
+	cd aerospike-client-c
+	make
+  	cd ..
+```
 
-make install
+## aerospike_php
 
-cd ..
-
-
-
-## git clone https://github.com/aerospike/aerospike-client-c.git
-
-  cd aerospike-client-c
-
-  make
-
-  cd ..
-
-
-
-## git clone http://dancal@src.widerlab.io/scm/tg/aerospike_php.git
-
-  cd aerospike_php
-
-  ./b
-
-  vi aerospike.ini
-
-     extension=aerospike.so
+```shell
+	git clone http://dancal@src.widerlab.io/scm/tg/aerospike_php.git
+	cd aerospike_php
+  	./b
+  	vi aerospike.ini
+    extension=aerospike.so
+```
 
 # 예제
 ```php
