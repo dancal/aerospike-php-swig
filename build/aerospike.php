@@ -27,11 +27,19 @@ if (!extension_loaded('aerospike')) {
 
 
 abstract class aerospike {
-	const TYPE_INT = 0;
+	const WP_NILL = 0;
 
-	const TYPE_FLOAT = TYPE_FLOAT;
+	const WP_LONG = WP_LONG;
 
-	const TYPE_STRING = TYPE_STRING;
+	const WP_DOUBLE = WP_DOUBLE;
+
+	const WP_STRING = WP_STRING;
+
+	const WP_TRUE = WP_TRUE;
+
+	const WP_FALSE = WP_FALSE;
+
+	const WP_NULL = WP_NULL;
 }
 
 /* PHP Proxy Classes */
@@ -100,6 +108,10 @@ class AerospikeWP {
 
 	function get($nspace,$set,$key_str) {
 		return AerospikeWP_get($this->_cPtr,$nspace,$set,$key_str);
+	}
+
+	function put($input_map) {
+		return AerospikeWP_put($this->_cPtr,$input_map);
 	}
 
 	function isConnected() {

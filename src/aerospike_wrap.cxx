@@ -999,9 +999,10 @@ static void SWIG_Php_SetModule(swig_module_info *pointer) {
 #define SWIGTYPE_int swig_types[0]
 #define SWIGTYPE_p_AS_DATA swig_types[1]
 #define SWIGTYPE_p_AerospikeWP swig_types[2]
-#define SWIGTYPE_p_std__mapT_std__string_AS_DATA_t swig_types[3]
-static swig_type_info *swig_types[5];
-static swig_module_info swig_module = {swig_types, 4, 0, 0, 0, 0};
+#define SWIGTYPE_p_int64_t swig_types[3]
+#define SWIGTYPE_p_std__vectorT_AS_DATA_t swig_types[4]
+static swig_type_info *swig_types[6];
+static swig_module_info swig_module = {swig_types, 5, 0, 0, 0, 0};
 #define SWIG_TypeQuery(name) SWIG_TypeQueryModule(&swig_module, &swig_module, name)
 #define SWIG_MangledTypeQuery(name) SWIG_MangledTypeQueryModule(&swig_module, &swig_module, name)
 
@@ -1086,7 +1087,23 @@ extern "C" {
 #include <aerospike/as_record.h>
 #include <aerospike/as_record_iterator.h>
 
+#include <zend_types.h>
+#include <zend_operators.h>
+#include <zend_smart_str.h>
+
+
 #include "../include/aerospike.hpp"
+
+#define DECLARE_ZVAL(__var)     zval __var
+#define DECLARE_ZVAL_P(__var)   zval* __var = NULL
+#define PARAM_ZVAL_P(__var)     zval* __var
+#define PARAM_ZVAL(__var)       zval __var
+#define AEROSPIKE_ZVAL_ARG(zv) &(zv)
+#define AS_PHP_LONG zend_long
+#define AS_PHP_SIZE size_t
+#define AEROSPIKE_Z_BVAL_P(__var)    Z_DVAL_P(__var)
+
+using namespace std;
 
 
 #include "zend_exceptions.h"
@@ -1113,10 +1130,10 @@ extern "C" {
 #include <stdexcept>
 
 
-static std::unordered_map<std::string, aerospike *> mAerospikeWP; 
+static std::unordered_map<std::string, aerospike *> _mAerospikeWP; 
 int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 
-	if ( mAerospikeWP.count(as_hosts) ) {
+	if ( _mAerospikeWP.count(as_hosts) ) {
 		return 0;
 	}
 
@@ -1154,7 +1171,7 @@ int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 	aerospike *as				= aerospike_new( &config );
 	as_status status        	= aerospike_connect( as, &as_err );
 	if ( status == AEROSPIKE_OK ) {
-		mAerospikeWP[as_hosts]	= as;
+		_mAerospikeWP[as_hosts]	= as;
 	}
 
 	return status;
@@ -1163,7 +1180,7 @@ int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 int aerospike_php_close() {
 
     as_error as_err;
-	for ( const auto& kv : mAerospikeWP ) {
+	for ( const auto& kv : _mAerospikeWP ) {
 	    as_error_reset(&as_err);
     	aerospike_close(kv.second, &as_err);
 		aerospike_destroy(kv.second);
@@ -1210,11 +1227,11 @@ AerospikeWP::~AerospikeWP() {
 
 bool AerospikeWP::isConnected() {
 	
-	if ( mAerospikeWP.count(this->host_key) <= 0 ) {
+	if ( _mAerospikeWP.count(this->host_key) <= 0 ) {
 		return false;
 	}
 
-	aerospike *as       = mAerospikeWP[this->host_key];
+	aerospike *as       = _mAerospikeWP[this->host_key];
 	if ( aerospike_cluster_is_connected(as) ) {
 		return true;
 	}
@@ -1227,14 +1244,15 @@ int AerospikeWP::getConnectionReusedCount() {
 	return use_connection_pool++;
 }
 
-mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
+vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 
-	mDataList *mResult	= new mDataList;
-	if ( mAerospikeWP.count(this->host_key) <= 0 ) {
-		return mResult;
+	vDataList *vResult	= new vDataList;
+
+	if ( _mAerospikeWP.count(this->host_key) <= 0 ) {
+		return vResult;
 	}
 
-	aerospike *as		= mAerospikeWP[this->host_key];
+	aerospike *as		= _mAerospikeWP[this->host_key];
 	
     as_error as_err;
     as_record* rec      = NULL;
@@ -1242,7 +1260,7 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
     as_key key;
     as_key_init(&key, nspace, set, key_str);
 
-	as_status status    = aerospike_key_get(mAerospikeWP[this->host_key], &as_err, NULL, &key, &rec);
+	as_status status    = aerospike_key_get(_mAerospikeWP[this->host_key], &as_err, NULL, &key, &rec);
 	if ( status == AEROSPIKE_OK ) {
 
 		as_record_iterator it;
@@ -1262,9 +1280,10 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 		        }
 
 				AS_DATA Values;
-				Values.typeId			= TYPE_STRING;
+				Values.typeId			= WP_STRING;
+                Values.keyName          = bin_name;
 				Values.strValue			= reinterpret_cast<char*>(as_bytes_get(bytes_val));
-				(*mResult)[bin_name] 	= Values;
+                (*vResult).push_back( Values );
 
 			} else if ( nValueType == AS_STRING ) {
 
@@ -1274,16 +1293,38 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 				}
 
 				AS_DATA Values;
-				Values.typeId			= TYPE_STRING;
+				Values.typeId			= WP_STRING;
+                Values.keyName          = bin_name;
 				Values.strValue			= as_string_to_byte( value );
-				(*mResult)[bin_name] 	= Values;
+                (*vResult).push_back( Values );
 
 			} else if ( nValueType == AS_INTEGER ) {
 
 				AS_DATA Values;
-				Values.typeId			= TYPE_INT;
+				Values.typeId			= WP_LONG;
+                Values.keyName          = bin_name;
 				Values.intValue			= as_integer_toint(as_integer_fromval(value));
-				(*mResult)[bin_name] 	= Values;
+                (*vResult).push_back( Values );
+
+			} else if ( nValueType == AS_DOUBLE ) {
+                // 
+
+				AS_DATA Values;
+				Values.typeId			= WP_DOUBLE;
+                Values.keyName          = bin_name;
+				Values.intValue			= as_double_get( as_double_fromval(value) );
+                (*vResult).push_back( Values );
+
+			} else if ( nValueType == AS_BOOLEAN ) {
+
+				AS_DATA Values;
+                Values.keyName          = bin_name;
+                if ( as_integer_toint(as_integer_fromval(value)) ) {
+				    Values.typeId		= WP_TRUE;
+                } else {
+				    Values.typeId		= WP_FALSE;
+                }
+                (*vResult).push_back( Values );
 
 			} else {
 			}
@@ -1295,7 +1336,38 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
     as_record_destroy(rec);
     as_key_destroy(&key);
 
-	return mResult;
+	return vResult;
+}
+
+int AerospikeWP::put( vDataList &input_map ) {
+
+    std::vector<AS_DATA>::iterator it;
+    for( it = input_map.begin( ); it != input_map.end( ); ++it ) {
+        switch( it->typeId ) {
+            case WP_NULL:
+                cout << "WP_NULL" << endl;
+                break; 
+            case WP_TRUE:
+                cout << "WP_TRUE" << endl;
+                break; 
+            case WP_FALSE:
+                cout << "WP_FALSE" << endl;
+                break; 
+            case WP_LONG:
+                cout << "WP_INTEGER = " << it->intValue << endl;
+                break;
+            case WP_DOUBLE:
+                cout << "WP_DOUBLE = " << it->doubleValue << endl;
+                break;
+            case WP_STRING:
+                cout << "WP_STRING = " << it->strValue << endl;
+                break;
+            default:
+                cout << "key = " << it->keyName << ", type = " << it->typeId << ", value = " << it->strValue << endl;
+        }
+    }
+
+    return 0;
 }
 
 
@@ -1305,25 +1377,29 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 static swig_type_info _swigt__int = {"_int", "int", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_AS_DATA = {"_p_AS_DATA", "AS_DATA *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_AerospikeWP = {"_p_AerospikeWP", "AerospikeWP *", 0, 0, (void*)0, 0};
-static swig_type_info _swigt__p_std__mapT_std__string_AS_DATA_t = {"_p_std__mapT_std__string_AS_DATA_t", "mDataList *|std::map< std::string,AS_DATA > *", 0, 0, (void*)0, 0};
+static swig_type_info _swigt__p_int64_t = {"_p_int64_t", "int64_t *", 0, 0, (void*)0, 0};
+static swig_type_info _swigt__p_std__vectorT_AS_DATA_t = {"_p_std__vectorT_AS_DATA_t", "vDataList *|std::vector< AS_DATA > *", 0, 0, (void*)0, 0};
 
 static swig_type_info *swig_type_initial[] = {
   &_swigt__int,
   &_swigt__p_AS_DATA,
   &_swigt__p_AerospikeWP,
-  &_swigt__p_std__mapT_std__string_AS_DATA_t,
+  &_swigt__p_int64_t,
+  &_swigt__p_std__vectorT_AS_DATA_t,
 };
 
 static swig_cast_info _swigc__int[] = {  {&_swigt__int, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_AS_DATA[] = {  {&_swigt__p_AS_DATA, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_AerospikeWP[] = {  {&_swigt__p_AerospikeWP, 0, 0, 0},{0, 0, 0, 0}};
-static swig_cast_info _swigc__p_std__mapT_std__string_AS_DATA_t[] = {  {&_swigt__p_std__mapT_std__string_AS_DATA_t, 0, 0, 0},{0, 0, 0, 0}};
+static swig_cast_info _swigc__p_int64_t[] = {  {&_swigt__p_int64_t, 0, 0, 0},{0, 0, 0, 0}};
+static swig_cast_info _swigc__p_std__vectorT_AS_DATA_t[] = {  {&_swigt__p_std__vectorT_AS_DATA_t, 0, 0, 0},{0, 0, 0, 0}};
 
 static swig_cast_info *swig_cast_initial[] = {
   _swigc__int,
   _swigc__p_AS_DATA,
   _swigc__p_AerospikeWP,
-  _swigc__p_std__mapT_std__string_AS_DATA_t,
+  _swigc__p_int64_t,
+  _swigc__p_std__vectorT_AS_DATA_t,
 };
 
 
@@ -1333,13 +1409,14 @@ static swig_cast_info *swig_cast_initial[] = {
 /* vdecl subsection */
 static int le_swig__int=0; /* handle for _int */
 static int le_swig__p_AS_DATA=0; /* handle for AS_DATA */
-static int le_swig__p_std__mapT_std__string_AS_DATA_t=0; /* handle for _p_std__mapT_std__string_AS_DATA_t */
+static int le_swig__p_int64_t=0; /* handle for _p_int64_t */
+static int le_swig__p_std__vectorT_AS_DATA_t=0; /* handle for _p_std__vectorT_AS_DATA_t */
 static int le_swig__p_AerospikeWP=0; /* handle for AerospikeWP */
 /* end vdecl subsection */
 /* wrapper section */
 ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_set) {
   AS_DATA *arg1 = (AS_DATA *) 0 ;
-  int arg2 ;
+  enum TypeID arg2 ;
   zval args[2];
   
   SWIG_ResetError();
@@ -1355,7 +1432,7 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_set) {
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
   
   /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,6,CONVERT_INT_IN@*/
-  arg2 = (int) zval_get_long(&args[1]);
+  arg2 = (enum TypeID) zval_get_long(&args[1]);
   /*@SWIG@*/;
   
   if (arg1) (arg1)->typeId = arg2;
@@ -1370,7 +1447,7 @@ fail:
 ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_get) {
   AS_DATA *arg1 = (AS_DATA *) 0 ;
   zval args[1];
-  int result;
+  enum TypeID result;
   
   SWIG_ResetError();
   if(ZEND_NUM_ARGS() != 1 || zend_get_parameters_array_ex(1, args) != SUCCESS) {
@@ -1383,9 +1460,9 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_get) {
   }
   
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
-  result = (int) ((arg1)->typeId);
+  result = (enum TypeID) ((arg1)->typeId);
   
-  RETVAL_LONG(result);
+  RETVAL_LONG((long)result);
   
 thrown:
   return;
@@ -1396,7 +1473,8 @@ fail:
 
 ZEND_NAMED_FUNCTION(_wrap_AS_DATA_intValue_set) {
   AS_DATA *arg1 = (AS_DATA *) 0 ;
-  int arg2 ;
+  int64_t arg2 ;
+  int64_t *tmp2 ;
   zval args[2];
   
   SWIG_ResetError();
@@ -1411,9 +1489,10 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_intValue_set) {
   
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
   
-  /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,6,CONVERT_INT_IN@*/
-  arg2 = (int) zval_get_long(&args[1]);
-  /*@SWIG@*/;
+  if (SWIG_ConvertPtr(&args[1], (void **) &tmp2, SWIGTYPE_p_int64_t, 0) < 0 || tmp2 == NULL) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 2 of AS_DATA_intValue_set. Expected SWIGTYPE_p_int64_t");
+  }
+  arg2 = *tmp2;
   
   if (arg1) (arg1)->intValue = arg2;
   
@@ -1427,7 +1506,7 @@ fail:
 ZEND_NAMED_FUNCTION(_wrap_AS_DATA_intValue_get) {
   AS_DATA *arg1 = (AS_DATA *) 0 ;
   zval args[1];
-  int result;
+  int64_t result;
   
   SWIG_ResetError();
   if(ZEND_NUM_ARGS() != 1 || zend_get_parameters_array_ex(1, args) != SUCCESS) {
@@ -1440,10 +1519,11 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_intValue_get) {
   }
   
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
-  result = (int) ((arg1)->intValue);
-  
-  RETVAL_LONG(result);
-  
+  result =  ((arg1)->intValue);
+  {
+    int64_t * resultobj = new int64_t((const int64_t &) result);
+    SWIG_SetPointerZval(return_value, (void *)resultobj, SWIGTYPE_p_int64_t, 1);
+  }
 thrown:
   return;
 fail:
@@ -1557,6 +1637,65 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_strValue_get) {
   
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
   result = (std::string *) & ((arg1)->strValue);
+  
+  ZVAL_STRINGL(return_value, result->data(), result->size());
+  
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
+ZEND_NAMED_FUNCTION(_wrap_AS_DATA_keyName_set) {
+  AS_DATA *arg1 = (AS_DATA *) 0 ;
+  std::string *arg2 = 0 ;
+  std::string temp2 ;
+  zval args[2];
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 2 || zend_get_parameters_array_ex(2, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AS_DATA, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AS_DATA_keyName_set. Expected SWIGTYPE_p_AS_DATA");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  
+  convert_to_string(&args[1]);
+  temp2.assign(Z_STRVAL(args[1]), Z_STRLEN(args[1]));
+  arg2 = &temp2;
+  
+  if (arg1) (arg1)->keyName = *arg2;
+  
+  
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
+ZEND_NAMED_FUNCTION(_wrap_AS_DATA_keyName_get) {
+  AS_DATA *arg1 = (AS_DATA *) 0 ;
+  zval args[1];
+  std::string *result = 0 ;
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 1 || zend_get_parameters_array_ex(1, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AS_DATA, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AS_DATA_keyName_get. Expected SWIGTYPE_p_AS_DATA");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  result = (std::string *) & ((arg1)->keyName);
   
   ZVAL_STRINGL(return_value, result->data(), result->size());
   
@@ -1749,7 +1888,7 @@ ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_get) {
   char *arg3 = (char *) 0 ;
   char *arg4 = (char *) 0 ;
   zval args[4];
-  mDataList *result = 0 ;
+  vDataList *result = 0 ;
   
   SWIG_ResetError();
   if(ZEND_NUM_ARGS() != 4 || zend_get_parameters_array_ex(4, args) != SUCCESS) {
@@ -1792,22 +1931,118 @@ ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_get) {
   }
   /*@SWIG@*/;
   
-  result = (mDataList *)(arg1)->get(arg2,arg3,arg4);
+  result = (vDataList *)(arg1)->get(arg2,arg3,arg4);
   {
-    mDataList::iterator iter = result->begin();
-    mDataList::const_iterator end = result->end();
+    vDataList::iterator iter = result->begin();
+    vDataList::const_iterator end = result->end();
+    
     array_init(return_value);
     for (; iter != end; ++iter) {
-      if ( iter->second.typeId == TYPE_STRING ) {
-        add_assoc_string(return_value, iter->first.c_str(), (char *)iter->second.strValue.c_str() );
-      } else if ( iter->second.typeId == TYPE_INT ) {
-        add_assoc_long(return_value, iter->first.c_str(), (int)iter->second.intValue );
-      } else if ( iter->second.typeId == TYPE_FLOAT ) {
-        add_assoc_double(return_value, iter->first.c_str(), (double)iter->second.doubleValue );
+      if ( iter->typeId == WP_STRING ) {
+        add_assoc_string(return_value, iter->keyName.c_str(), (char *)iter->strValue.c_str() );
+      } else if ( iter->typeId == WP_LONG ) {
+        add_assoc_long(return_value, iter->keyName.c_str(), (int)iter->intValue );
+      } else if ( iter->typeId == WP_DOUBLE ) {
+        add_assoc_double(return_value, iter->keyName.c_str(), (double)iter->doubleValue );
+      } else if ( iter->typeId == WP_TRUE ) {
+        add_assoc_bool(return_value, iter->keyName.c_str(), true );
+      } else if ( iter->typeId == WP_FALSE ) {
+        add_assoc_bool(return_value, iter->keyName.c_str(), false );
+      } else if ( iter->typeId == WP_NULL ) {
+        add_assoc_null(return_value, iter->keyName.c_str() );
       }
-    }
+    } 
     delete result;
   }
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
+ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_put) {
+  AerospikeWP *arg1 = (AerospikeWP *) 0 ;
+  vDataList *arg2 = 0 ;
+  zval args[2];
+  int result;
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 2 || zend_get_parameters_array_ex(2, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AerospikeWP, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AerospikeWP_put. Expected SWIGTYPE_p_AerospikeWP");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  {
+    zval *arg;
+    zval *z_array;
+    long version = 0;
+    
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "za|l", &arg, &z_array, &version) == FAILURE) {
+      return;
+    }
+    
+    vDataList mData;
+    
+    zend_string *key;
+    zval *data;
+    const HashTable *array  = HASH_OF(z_array);
+    
+    ZEND_HASH_FOREACH_STR_KEY_VAL(array, key, data) {
+      const char* key_char    = ZSTR_VAL(key);
+      const zend_uchar zRet   = Z_TYPE_P(data);
+      
+      AS_DATA Values;
+      Values.keyName          = key_char;
+      if ( zRet == IS_TRUE ) {
+        convert_to_boolean(data);
+        Values.typeId           = WP_TRUE;
+        mData.push_back( Values );
+      } else if ( zRet == IS_FALSE ) {
+        convert_to_boolean(data);
+        Values.typeId           = WP_FALSE;
+        mData.push_back( Values );
+      } else if ( zRet == IS_STRING ) {
+        convert_to_string(data);
+        Values.typeId           = WP_STRING;
+        Values.strValue         = Z_STRVAL_P(data);
+        mData.push_back( Values );
+      } else if ( zRet == IS_LONG ) {
+        convert_to_long(data);
+        Values.typeId           = WP_LONG;
+        Values.intValue         = (int64_t)Z_LVAL_P(data);
+        mData.push_back( Values );
+      } else if ( zRet == IS_DOUBLE ) {
+        convert_to_double(data);
+        Values.typeId           = WP_DOUBLE;
+        Values.doubleValue      = (double)Z_DVAL_P(data);
+        mData.push_back( Values );
+      } else if ( zRet == IS_ARRAY ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "ARRAY Type is Not Support.");
+      } else if ( zRet == IS_OBJECT ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "OBJECT Type is Not Support.");
+      } else if ( zRet == IS_RESOURCE ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "RESOURCE Type is Not Support.");
+      } else if ( zRet == IS_REFERENCE ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "REFERENCE Type is Not Support.");
+      } else if ( zRet == IS_NULL ) {
+        Values.typeId           = WP_NULL;
+        mData.push_back( Values );
+      }
+      
+    } ZEND_HASH_FOREACH_END();
+    
+    arg2 = &mData;
+  }
+  result = (int)(arg1)->put(*arg2);
+  
+  RETVAL_LONG(result);
+  
 thrown:
   return;
 fail:
@@ -1916,11 +2151,14 @@ static zend_function_entry aerospike_functions[] = {
  SWIG_ZEND_NAMED_FE(as_data_doublevalue_get,_wrap_AS_DATA_doubleValue_get,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(as_data_strvalue_set,_wrap_AS_DATA_strValue_set,swig_arginfo_00)
  SWIG_ZEND_NAMED_FE(as_data_strvalue_get,_wrap_AS_DATA_strValue_get,swig_arginfo_0)
+ SWIG_ZEND_NAMED_FE(as_data_keyname_set,_wrap_AS_DATA_keyName_set,swig_arginfo_00)
+ SWIG_ZEND_NAMED_FE(as_data_keyname_get,_wrap_AS_DATA_keyName_get,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(new_as_data,_wrap_new_AS_DATA,swig_arginfo_)
  SWIG_ZEND_NAMED_FE(aerospikewp_host_key_set,_wrap_AerospikeWP_host_key_set,swig_arginfo_00)
  SWIG_ZEND_NAMED_FE(aerospikewp_host_key_get,_wrap_AerospikeWP_host_key_get,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(new_aerospikewp,_wrap_new_AerospikeWP,swig_arginfo_000)
  SWIG_ZEND_NAMED_FE(aerospikewp_get,_wrap_AerospikeWP_get,swig_arginfo_0000)
+ SWIG_ZEND_NAMED_FE(aerospikewp_put,_wrap_AerospikeWP_put,swig_arginfo_00)
  SWIG_ZEND_NAMED_FE(aerospikewp_isconnected,_wrap_AerospikeWP_isConnected,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(aerospikewp_getconnectionreusedcount,_wrap_AerospikeWP_getConnectionReusedCount,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(swig_aerospike_alter_newobject,_wrap_swig_aerospike_alter_newobject,NULL)
@@ -2199,17 +2437,23 @@ le_swig__int=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL,
 SWIG_TypeClientData(SWIGTYPE_int,&le_swig__int);
 le_swig__p_AS_DATA=zend_register_list_destructors_ex(_wrap_destroy_p_AS_DATA, NULL, SWIGTYPE_p_AS_DATA->name, module_number);
 SWIG_TypeClientData(SWIGTYPE_p_AS_DATA,&le_swig__p_AS_DATA);
-le_swig__p_std__mapT_std__string_AS_DATA_t=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL, SWIGTYPE_p_std__mapT_std__string_AS_DATA_t->name, module_number);
-SWIG_TypeClientData(SWIGTYPE_p_std__mapT_std__string_AS_DATA_t,&le_swig__p_std__mapT_std__string_AS_DATA_t);
+le_swig__p_int64_t=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL, SWIGTYPE_p_int64_t->name, module_number);
+SWIG_TypeClientData(SWIGTYPE_p_int64_t,&le_swig__p_int64_t);
+le_swig__p_std__vectorT_AS_DATA_t=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL, SWIGTYPE_p_std__vectorT_AS_DATA_t->name, module_number);
+SWIG_TypeClientData(SWIGTYPE_p_std__vectorT_AS_DATA_t,&le_swig__p_std__vectorT_AS_DATA_t);
 le_swig__p_AerospikeWP=zend_register_list_destructors_ex(_wrap_destroy_p_AerospikeWP, NULL, SWIGTYPE_p_AerospikeWP->name, module_number);
 SWIG_TypeClientData(SWIGTYPE_p_AerospikeWP,&le_swig__p_AerospikeWP);
 CG(active_class_entry) = NULL;
 /* end oinit subsection */
 
 /* cinit subsection */
-SWIG_LONG_CONSTANT(TYPE_INT, (int)TYPE_INT);
-SWIG_LONG_CONSTANT(TYPE_FLOAT, (int)TYPE_FLOAT);
-SWIG_LONG_CONSTANT(TYPE_STRING, (int)TYPE_STRING);
+SWIG_LONG_CONSTANT(WP_NILL, (int)WP_NILL);
+SWIG_LONG_CONSTANT(WP_LONG, (int)WP_LONG);
+SWIG_LONG_CONSTANT(WP_DOUBLE, (int)WP_DOUBLE);
+SWIG_LONG_CONSTANT(WP_STRING, (int)WP_STRING);
+SWIG_LONG_CONSTANT(WP_TRUE, (int)WP_TRUE);
+SWIG_LONG_CONSTANT(WP_FALSE, (int)WP_FALSE);
+SWIG_LONG_CONSTANT(WP_NULL, (int)WP_NULL);
 /* end cinit subsection */
 
     return SUCCESS;

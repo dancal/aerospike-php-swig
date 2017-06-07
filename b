@@ -8,9 +8,9 @@ LIBS="-lstdc++ -lrt -lc -lm -ldl -lz -lbz2 -lcrypto ${AEROSPIKE_CLIENT_C}/lib/li
 
 swig -c++ -php7 -outdir build src/${MODULE_NAME}.i
 
-g++ -std=c++11 `php-config --includes` -O2 -Ibuild -march=native -mtune=native -fPIC -c src/*.cxx
+g++ -std=c++14 `php-config --includes` -O2 -Ibuild -march=native -mtune=native -fPIC -c src/*.cxx
 
-g++ -std=c++11 -shared *.o -I${AEROSPIKE_CLIENT_C}/include ${LIBS} -o libs/${MODULE_NAME}.so
+g++ -std=c++14 -shared *.o -I${AEROSPIKE_CLIENT_C}/include ${LIBS} -o libs/${MODULE_NAME}.so
 
 cp -f libs/${MODULE_NAME}.so $PHP_INSTALL_PATH/
 

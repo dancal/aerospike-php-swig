@@ -1,3 +1,6 @@
+/*
+    2017.06.04 created by dancal.
+*/
 %module aerospike;
 
 %{
@@ -13,7 +16,23 @@
 #include <aerospike/as_record.h>
 #include <aerospike/as_record_iterator.h>
 
+#include <zend_types.h>
+#include <zend_operators.h>
+#include <zend_smart_str.h>
+
+
 #include "../include/aerospike.hpp"
+
+#define DECLARE_ZVAL(__var)     zval __var
+#define DECLARE_ZVAL_P(__var)   zval* __var = NULL
+#define PARAM_ZVAL_P(__var)     zval* __var
+#define PARAM_ZVAL(__var)       zval __var
+#define AEROSPIKE_ZVAL_ARG(zv) &(zv)
+#define AS_PHP_LONG zend_long
+#define AS_PHP_SIZE size_t
+#define AEROSPIKE_Z_BVAL_P(__var)    Z_DVAL_P(__var)
+
+using namespace std;
 %}
 
 %include "../include/std_string.i"
@@ -22,10 +41,10 @@
 %include "../include/typemaps.i"
 
 %{
-static std::unordered_map<std::string, aerospike *> mAerospikeWP; 
+static std::unordered_map<std::string, aerospike *> _mAerospikeWP; 
 int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 
-	if ( mAerospikeWP.count(as_hosts) ) {
+	if ( _mAerospikeWP.count(as_hosts) ) {
 		return 0;
 	}
 
@@ -63,7 +82,7 @@ int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 	aerospike *as				= aerospike_new( &config );
 	as_status status        	= aerospike_connect( as, &as_err );
 	if ( status == AEROSPIKE_OK ) {
-		mAerospikeWP[as_hosts]	= as;
+		_mAerospikeWP[as_hosts]	= as;
 	}
 
 	return status;
@@ -72,7 +91,7 @@ int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 int aerospike_php_close() {
 
     as_error as_err;
-	for ( const auto& kv : mAerospikeWP ) {
+	for ( const auto& kv : _mAerospikeWP ) {
 	    as_error_reset(&as_err);
     	aerospike_close(kv.second, &as_err);
 		aerospike_destroy(kv.second);
@@ -119,11 +138,11 @@ AerospikeWP::~AerospikeWP() {
 
 bool AerospikeWP::isConnected() {
 	
-	if ( mAerospikeWP.count(this->host_key) <= 0 ) {
+	if ( _mAerospikeWP.count(this->host_key) <= 0 ) {
 		return false;
 	}
 
-	aerospike *as       = mAerospikeWP[this->host_key];
+	aerospike *as       = _mAerospikeWP[this->host_key];
 	if ( aerospike_cluster_is_connected(as) ) {
 		return true;
 	}
@@ -136,14 +155,15 @@ int AerospikeWP::getConnectionReusedCount() {
 	return use_connection_pool++;
 }
 
-mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
+vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 
-	mDataList *mResult	= new mDataList;
-	if ( mAerospikeWP.count(this->host_key) <= 0 ) {
-		return mResult;
+	vDataList *vResult	= new vDataList;
+
+	if ( _mAerospikeWP.count(this->host_key) <= 0 ) {
+		return vResult;
 	}
 
-	aerospike *as		= mAerospikeWP[this->host_key];
+	aerospike *as		= _mAerospikeWP[this->host_key];
 	
     as_error as_err;
     as_record* rec      = NULL;
@@ -151,7 +171,7 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
     as_key key;
     as_key_init(&key, nspace, set, key_str);
 
-	as_status status    = aerospike_key_get(mAerospikeWP[this->host_key], &as_err, NULL, &key, &rec);
+	as_status status    = aerospike_key_get(_mAerospikeWP[this->host_key], &as_err, NULL, &key, &rec);
 	if ( status == AEROSPIKE_OK ) {
 
 		as_record_iterator it;
@@ -171,9 +191,10 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 		        }
 
 				AS_DATA Values;
-				Values.typeId			= TYPE_STRING;
+				Values.typeId			= WP_STRING;
+                Values.keyName          = bin_name;
 				Values.strValue			= reinterpret_cast<char*>(as_bytes_get(bytes_val));
-				(*mResult)[bin_name] 	= Values;
+                (*vResult).push_back( Values );
 
 			} else if ( nValueType == AS_STRING ) {
 
@@ -183,16 +204,38 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 				}
 
 				AS_DATA Values;
-				Values.typeId			= TYPE_STRING;
+				Values.typeId			= WP_STRING;
+                Values.keyName          = bin_name;
 				Values.strValue			= as_string_to_byte( value );
-				(*mResult)[bin_name] 	= Values;
+                (*vResult).push_back( Values );
 
 			} else if ( nValueType == AS_INTEGER ) {
 
 				AS_DATA Values;
-				Values.typeId			= TYPE_INT;
+				Values.typeId			= WP_LONG;
+                Values.keyName          = bin_name;
 				Values.intValue			= as_integer_toint(as_integer_fromval(value));
-				(*mResult)[bin_name] 	= Values;
+                (*vResult).push_back( Values );
+
+			} else if ( nValueType == AS_DOUBLE ) {
+                // 
+
+				AS_DATA Values;
+				Values.typeId			= WP_DOUBLE;
+                Values.keyName          = bin_name;
+				Values.intValue			= as_double_get( as_double_fromval(value) );
+                (*vResult).push_back( Values );
+
+			} else if ( nValueType == AS_BOOLEAN ) {
+
+				AS_DATA Values;
+                Values.keyName          = bin_name;
+                if ( as_integer_toint(as_integer_fromval(value)) ) {
+				    Values.typeId		= WP_TRUE;
+                } else {
+				    Values.typeId		= WP_FALSE;
+                }
+                (*vResult).push_back( Values );
 
 			} else {
 			}
@@ -204,25 +247,127 @@ mDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
     as_record_destroy(rec);
     as_key_destroy(&key);
 
-	return mResult;
+	return vResult;
+}
+
+int AerospikeWP::put( vDataList &input_map ) {
+
+    std::vector<AS_DATA>::iterator it;
+    for( it = input_map.begin( ); it != input_map.end( ); ++it ) {
+        switch( it->typeId ) {
+            case WP_NULL:
+                cout << "WP_NULL" << endl;
+                break; 
+            case WP_TRUE:
+                cout << "WP_TRUE" << endl;
+                break; 
+            case WP_FALSE:
+                cout << "WP_FALSE" << endl;
+                break; 
+            case WP_LONG:
+                cout << "WP_INTEGER = " << it->intValue << endl;
+                break;
+            case WP_DOUBLE:
+                cout << "WP_DOUBLE = " << it->doubleValue << endl;
+                break;
+            case WP_STRING:
+                cout << "WP_STRING = " << it->strValue << endl;
+                break;
+            default:
+                cout << "key = " << it->keyName << ", type = " << it->typeId << ", value = " << it->strValue << endl;
+        }
+    }
+
+    return 0;
 }
 
 %}
 
-%typemap(out) mDataList*
-{
-    mDataList::iterator iter = $1->begin();
-    mDataList::const_iterator end = $1->end();
+%typemap(in) vDataList & {
+
+    zval *arg;
+    zval *z_array;
+    long version = 0;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "za|l", &arg, &z_array, &version) == FAILURE) {
+        return;
+    }
+
+    vDataList mData;
+
+    zend_string *key;
+    zval *data;
+    const HashTable *array  = HASH_OF(z_array);
+
+    ZEND_HASH_FOREACH_STR_KEY_VAL(array, key, data) {
+
+        const char* key_char    = ZSTR_VAL(key);
+        const zend_uchar zRet   = Z_TYPE_P(data);
+
+        AS_DATA Values;
+        Values.keyName          = key_char;
+        if ( zRet == IS_TRUE ) {
+            convert_to_boolean(data);
+            Values.typeId           = WP_TRUE;
+            mData.push_back( Values );
+        } else if ( zRet == IS_FALSE ) {
+            convert_to_boolean(data);
+            Values.typeId           = WP_FALSE;
+            mData.push_back( Values );
+        } else if ( zRet == IS_STRING ) {
+            convert_to_string(data);
+            Values.typeId           = WP_STRING;
+            Values.strValue         = Z_STRVAL_P(data);
+            mData.push_back( Values );
+        } else if ( zRet == IS_LONG ) {
+            convert_to_long(data);
+            Values.typeId           = WP_LONG;
+            Values.intValue         = (int64_t)Z_LVAL_P(data);
+            mData.push_back( Values );
+        } else if ( zRet == IS_DOUBLE ) {
+            convert_to_double(data);
+            Values.typeId           = WP_DOUBLE;
+            Values.doubleValue      = (double)Z_DVAL_P(data);
+            mData.push_back( Values );
+        } else if ( zRet == IS_ARRAY ) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "ARRAY Type is Not Support. Ignore it.");
+        } else if ( zRet == IS_OBJECT ) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "OBJECT Type is Not Support. Ignore it.");
+        } else if ( zRet == IS_RESOURCE ) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "RESOURCE Type is Not Support. Ignore it.");
+        } else if ( zRet == IS_REFERENCE ) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "REFERENCE Type is Not Support. Ignore it.");
+        } else if ( zRet == IS_NULL ) {
+            Values.typeId           = WP_NULL;
+            mData.push_back( Values );
+        }
+
+    } ZEND_HASH_FOREACH_END();
+
+    $1 = &mData;
+}
+
+%typemap(out) vDataList * {
+
+    vDataList::iterator iter = $1->begin();
+    vDataList::const_iterator end = $1->end();
+
     array_init(return_value);
     for (; iter != end; ++iter) {
-		if ( iter->second.typeId == TYPE_STRING ) {
-        	add_assoc_string(return_value, iter->first.c_str(), (char *)iter->second.strValue.c_str() );
-		} else if ( iter->second.typeId == TYPE_INT ) {
-        	add_assoc_long(return_value, iter->first.c_str(), (int)iter->second.intValue );
-		} else if ( iter->second.typeId == TYPE_FLOAT ) {
-        	add_assoc_double(return_value, iter->first.c_str(), (double)iter->second.doubleValue );
+		if ( iter->typeId == WP_STRING ) {
+        	add_assoc_string(return_value, iter->keyName.c_str(), (char *)iter->strValue.c_str() );
+		} else if ( iter->typeId == WP_LONG ) {
+        	add_assoc_long(return_value, iter->keyName.c_str(), (int)iter->intValue );
+		} else if ( iter->typeId == WP_DOUBLE ) {
+        	add_assoc_double(return_value, iter->keyName.c_str(), (double)iter->doubleValue );
+		} else if ( iter->typeId == WP_TRUE ) {
+        	add_assoc_bool(return_value, iter->keyName.c_str(), true );
+		} else if ( iter->typeId == WP_FALSE ) {
+        	add_assoc_bool(return_value, iter->keyName.c_str(), false );
+		} else if ( iter->typeId == WP_NULL ) {
+        	add_assoc_null(return_value, iter->keyName.c_str() );
 		}
-    }
+    } 
     delete $1;
 }
 
