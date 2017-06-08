@@ -1087,21 +1087,17 @@ extern "C" {
 #include <aerospike/as_record.h>
 #include <aerospike/as_record_iterator.h>
 
+#include <php.h>
+#include <php_ini.h>
 #include <zend_types.h>
 #include <zend_operators.h>
 #include <zend_smart_str.h>
-
+#include <ext/standard/php_var.h>
+#include <ext/standard/php_string.h>
+#include <ext/standard/basic_functions.h>
+#include <ext/standard/php_incomplete_class.h>
 
 #include "../include/aerospike.hpp"
-
-#define DECLARE_ZVAL(__var)     zval __var
-#define DECLARE_ZVAL_P(__var)   zval* __var = NULL
-#define PARAM_ZVAL_P(__var)     zval* __var
-#define PARAM_ZVAL(__var)       zval __var
-#define AEROSPIKE_ZVAL_ARG(zv) &(zv)
-#define AS_PHP_LONG zend_long
-#define AS_PHP_SIZE size_t
-#define AEROSPIKE_Z_BVAL_P(__var)    Z_DVAL_P(__var)
 
 using namespace std;
 
@@ -1216,6 +1212,8 @@ int as_string_len(const as_val * v) {
 
 }
 
+void php_var_serialize(smart_str *buf, zval *struc, php_serialize_data_t *data);
+
 // AerospikeWP Class
 AerospikeWP::AerospikeWP( char *as_hosts, int as_port, int as_timeout ) {
 	this->host_key	= as_hosts;
@@ -1312,18 +1310,7 @@ vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 				AS_DATA Values;
 				Values.typeId			= WP_DOUBLE;
                 Values.keyName          = bin_name;
-				Values.intValue			= as_double_get( as_double_fromval(value) );
-                (*vResult).push_back( Values );
-
-			} else if ( nValueType == AS_BOOLEAN ) {
-
-				AS_DATA Values;
-                Values.keyName          = bin_name;
-                if ( as_integer_toint(as_integer_fromval(value)) ) {
-				    Values.typeId		= WP_TRUE;
-                } else {
-				    Values.typeId		= WP_FALSE;
-                }
+				Values.doubleValue		= as_double_get( as_double_fromval(value) );
                 (*vResult).push_back( Values );
 
 			} else {
@@ -1339,35 +1326,67 @@ vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 	return vResult;
 }
 
-int AerospikeWP::put( vDataList &input_map ) {
+int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_map ) {
+
+    if ( _mAerospikeWP.count(this->host_key) <= 0 ) {
+        return AEROSPIKE_ERR_CLIENT;
+    }
+
+    int vDataSize       = input_map.size();
+
+    as_error as_err;
+    aerospike *as       = _mAerospikeWP[this->host_key];
+
+    as_key keyAS;
+    as_key_init(&keyAS, nspace, set, key_str);
+
+    as_record rec;
+    as_record_inita(&rec, vDataSize);
 
     std::vector<AS_DATA>::iterator it;
     for( it = input_map.begin( ); it != input_map.end( ); ++it ) {
         switch( it->typeId ) {
             case WP_NULL:
-                cout << "WP_NULL" << endl;
+                as_record_set_nil( &rec, it->keyName.c_str() );
+                cout << "as_record_set_nil = " << it->keyName << endl;
                 break; 
             case WP_TRUE:
-                cout << "WP_TRUE" << endl;
+                as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(1) );
+                cout << "as_record_get_integer = " << it->keyName << ", v = 1" << endl;
                 break; 
             case WP_FALSE:
-                cout << "WP_FALSE" << endl;
+                as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(0) );
+                cout << "as_record_get_integer = " << it->keyName << ", v = 0" << endl;
                 break; 
             case WP_LONG:
-                cout << "WP_INTEGER = " << it->intValue << endl;
+                as_record_set_int64( &rec, it->keyName.c_str(), it->intValue ); 
+                cout << "as_record_get_int64 = " << it->keyName << ", v = " << it->intValue << endl;
                 break;
             case WP_DOUBLE:
-                cout << "WP_DOUBLE = " << it->doubleValue << endl;
+                as_record_set_double( &rec, it->keyName.c_str(), it->doubleValue ); 
+                cout << "as_record_set_double = " << it->keyName << ", v = " << it->doubleValue << endl;
                 break;
             case WP_STRING:
-                cout << "WP_STRING = " << it->strValue << endl;
+                as_record_set_str( &rec, it->keyName.c_str(), it->strValue.c_str() );
+                cout << "as_record_set_string = " << it->keyName << ", v = " << it->strValue << endl;
                 break;
             default:
+                // static const uint8_t bytes[] = { 1, 2, 3 };
+                // as_record_set_raw(&rec, "test-bin-4", bytes, 3);
                 cout << "key = " << it->keyName << ", type = " << it->typeId << ", value = " << it->strValue << endl;
+                break;
         }
     }
 
-    return 0;
+    int retCode = 0;
+    if (aerospike_key_put(as, &as_err, NULL, &keyAS, &rec) != AEROSPIKE_OK) {
+        retCode = as_err.code;
+    }
+
+    as_key_destroy(&keyAS);
+    as_record_destroy(&rec);
+
+    return retCode;
 }
 
 
@@ -1963,12 +1982,15 @@ fail:
 
 ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_put) {
   AerospikeWP *arg1 = (AerospikeWP *) 0 ;
-  vDataList *arg2 = 0 ;
-  zval args[2];
+  char *arg2 = (char *) 0 ;
+  char *arg3 = (char *) 0 ;
+  char *arg4 = (char *) 0 ;
+  vDataList *arg5 = 0 ;
+  zval args[5];
   int result;
   
   SWIG_ResetError();
-  if(ZEND_NUM_ARGS() != 2 || zend_get_parameters_array_ex(2, args) != SUCCESS) {
+  if(ZEND_NUM_ARGS() != 5 || zend_get_parameters_array_ex(5, args) != SUCCESS) {
     WRONG_PARAM_COUNT;
   }
   
@@ -1978,14 +2000,50 @@ ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_put) {
   }
   
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  
+  /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,57,CONVERT_STRING_IN@*/
+  if (Z_ISNULL(args[1])) {
+    arg2 = (char *) 0;
+  } else {
+    convert_to_string(&args[1]);
+    arg2 = (char *) Z_STRVAL(args[1]);
+  }
+  /*@SWIG@*/;
+  
+  
+  /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,57,CONVERT_STRING_IN@*/
+  if (Z_ISNULL(args[2])) {
+    arg3 = (char *) 0;
+  } else {
+    convert_to_string(&args[2]);
+    arg3 = (char *) Z_STRVAL(args[2]);
+  }
+  /*@SWIG@*/;
+  
+  
+  /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,57,CONVERT_STRING_IN@*/
+  if (Z_ISNULL(args[3])) {
+    arg4 = (char *) 0;
+  } else {
+    convert_to_string(&args[3]);
+    arg4 = (char *) Z_STRVAL(args[3]);
+  }
+  /*@SWIG@*/;
+  
   {
     zval *arg;
     zval *z_array;
     long version = 0;
     
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "za|l", &arg, &z_array, &version) == FAILURE) {
+    zval *nspace;
+    zval *set;
+    zval *key_str;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zzzza|l", &arg, &nspace, &set, &key_str, &z_array, &version ) == FAILURE) {
       return;
     }
+    // convert_to_string(nspace);
+    // convert_to_string(set);
+    // convert_to_string(key_str);
     
     vDataList mData;
     
@@ -2000,46 +2058,52 @@ ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_put) {
       AS_DATA Values;
       Values.keyName          = key_char;
       if ( zRet == IS_TRUE ) {
-        convert_to_boolean(data);
         Values.typeId           = WP_TRUE;
         mData.push_back( Values );
       } else if ( zRet == IS_FALSE ) {
-        convert_to_boolean(data);
         Values.typeId           = WP_FALSE;
         mData.push_back( Values );
       } else if ( zRet == IS_STRING ) {
-        convert_to_string(data);
         Values.typeId           = WP_STRING;
         Values.strValue         = Z_STRVAL_P(data);
         mData.push_back( Values );
       } else if ( zRet == IS_LONG ) {
-        convert_to_long(data);
         Values.typeId           = WP_LONG;
         Values.intValue         = (int64_t)Z_LVAL_P(data);
         mData.push_back( Values );
       } else if ( zRet == IS_DOUBLE ) {
-        convert_to_double(data);
         Values.typeId           = WP_DOUBLE;
         Values.doubleValue      = (double)Z_DVAL_P(data);
         mData.push_back( Values );
-      } else if ( zRet == IS_ARRAY ) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "ARRAY Type is Not Support.");
-      } else if ( zRet == IS_OBJECT ) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "OBJECT Type is Not Support.");
-      } else if ( zRet == IS_RESOURCE ) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "RESOURCE Type is Not Support.");
-      } else if ( zRet == IS_REFERENCE ) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "REFERENCE Type is Not Support.");
       } else if ( zRet == IS_NULL ) {
         Values.typeId           = WP_NULL;
         mData.push_back( Values );
+      } else if ( zRet == IS_ARRAY ) {
+        //php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP ARRAY Type is Not Support. Ignore it.");
+        smart_str buf = {
+          0
+        };
+        php_serialize_data_t var_hash;
+        PHP_VAR_SERIALIZE_INIT(var_hash);
+        php_var_serialize(&buf, data, &var_hash);
+        PHP_VAR_SERIALIZE_DESTROY(var_hash);
+        cout << buf.s->val << endl;
+        smart_str_free(&buf);
+        
+      } else if ( zRet == IS_OBJECT ) {
+        // php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP OBJECT Type is Not Support. Ignore it.");
+        
+      } else if ( zRet == IS_RESOURCE ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP RESOURCE Type is Not Support. Ignore it.");
+      } else if ( zRet == IS_REFERENCE ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP REFERENCE Type is Not Support. Ignore it.");
       }
       
     } ZEND_HASH_FOREACH_END();
     
-    arg2 = &mData;
+    arg5 = &mData;
   }
-  result = (int)(arg1)->put(*arg2);
+  result = (int)(arg1)->put(arg2,arg3,arg4,*arg5);
   
   RETVAL_LONG(result);
   
@@ -2138,6 +2202,13 @@ ZEND_BEGIN_ARG_INFO_EX(swig_arginfo_0000, 0, 0, 0)
  ZEND_ARG_PASS_INFO(0)
  ZEND_ARG_PASS_INFO(0)
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_INFO_EX(swig_arginfo_00000, 0, 0, 0)
+ ZEND_ARG_PASS_INFO(0)
+ ZEND_ARG_PASS_INFO(0)
+ ZEND_ARG_PASS_INFO(0)
+ ZEND_ARG_PASS_INFO(0)
+ ZEND_ARG_PASS_INFO(0)
+ZEND_END_ARG_INFO()
 
 
 /* entry subsection */
@@ -2158,7 +2229,7 @@ static zend_function_entry aerospike_functions[] = {
  SWIG_ZEND_NAMED_FE(aerospikewp_host_key_get,_wrap_AerospikeWP_host_key_get,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(new_aerospikewp,_wrap_new_AerospikeWP,swig_arginfo_000)
  SWIG_ZEND_NAMED_FE(aerospikewp_get,_wrap_AerospikeWP_get,swig_arginfo_0000)
- SWIG_ZEND_NAMED_FE(aerospikewp_put,_wrap_AerospikeWP_put,swig_arginfo_00)
+ SWIG_ZEND_NAMED_FE(aerospikewp_put,_wrap_AerospikeWP_put,swig_arginfo_00000)
  SWIG_ZEND_NAMED_FE(aerospikewp_isconnected,_wrap_AerospikeWP_isConnected,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(aerospikewp_getconnectionreusedcount,_wrap_AerospikeWP_getConnectionReusedCount,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(swig_aerospike_alter_newobject,_wrap_swig_aerospike_alter_newobject,NULL)

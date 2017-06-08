@@ -3,6 +3,9 @@
 
 # Install
 
+##
+	apt-get install libphp7.0-embed
+
 ## SWIG
 
 ```shell

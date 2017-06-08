@@ -110,8 +110,8 @@ class AerospikeWP {
 		return AerospikeWP_get($this->_cPtr,$nspace,$set,$key_str);
 	}
 
-	function put($input_map) {
-		return AerospikeWP_put($this->_cPtr,$input_map);
+	function put($nspace,$set,$key_str,$input_map) {
+		return AerospikeWP_put($this->_cPtr,$nspace,$set,$key_str,$input_map);
 	}
 
 	function isConnected() {

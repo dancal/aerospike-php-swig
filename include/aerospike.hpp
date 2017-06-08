@@ -28,7 +28,7 @@ class AerospikeWP {
         AerospikeWP( char *as_hosts, int as_port, int as_timeout );
         ~AerospikeWP();
 		vDataList *get( char *nspace, char *set, char *key_str );
-		int put( vDataList &input_map );
+		int put( char *nspace, char *set, char *key_str, vDataList &input_map );
 		bool isConnected();
 		int getConnectionReusedCount();
 };
