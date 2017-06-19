@@ -1,4 +1,3 @@
-
 # PHP7, PHP7-FPM aerospike module
 
 
