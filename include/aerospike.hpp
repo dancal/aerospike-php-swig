@@ -9,15 +9,20 @@ enum TypeID {
     WP_STRING,
     WP_TRUE,
     WP_FALSE,
+	WP_ARRAY,
+	WP_OBJECT,
+	WP_BYTES,
     WP_NULL
 };    
 
 struct AS_DATA {
-    enum TypeID typeId = {WP_NILL};
+	short typeId;
 	int64_t intValue;
 	double doubleValue;
 	std::string strValue;
 	std::string keyName;
+	zval *val;
+	int size;
 };
 
 //typedef std::map<std::string, AS_DATA> mDataList;

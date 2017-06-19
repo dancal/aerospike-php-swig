@@ -4,31 +4,82 @@
 %module aerospike;
 
 %{
+#include <fstream>
+#include <sstream>
 #include <iostream>
 #include <vector>
 #include <memory>
 #include <map>
 #include <unordered_map>
 
+#include <boost/algorithm/string/classification.hpp> // Include boost::for is_any_of
+#include <boost/algorithm/string/split.hpp> // Include for boost::split
+
 #include <aerospike/aerospike.h>
 #include <aerospike/aerospike_key.h>
 #include <aerospike/aerospike_batch.h>
 #include <aerospike/as_record.h>
 #include <aerospike/as_record_iterator.h>
+#include <aerospike/as_bytes.h>
+#include <aerospike/as_status.h>
+#include <aerospike/as_config.h>
+
 
 #include <php.h>
-#include <php_ini.h>
 #include <zend_types.h>
 #include <zend_operators.h>
 #include <zend_smart_str.h>
+
+#include "zend.h"
+#include "zend_globals.h"
+#include "zend_variables.h"
+#include "zend_API.h"
+#include "zend_objects.h"
+#include "zend_object_handlers.h"
+
 #include <ext/standard/php_var.h>
 #include <ext/standard/php_string.h>
 #include <ext/standard/basic_functions.h>
 #include <ext/standard/php_incomplete_class.h>
+#include <ext/standard/base64.h>
 
+#include "../include/base64.hpp"
 #include "../include/aerospike.hpp"
 
+#define AS_BYTECLASS   "Aerospike\\Bytes"
+
+/* {{{ base64 tables */
+static const char base64_table[] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/', '\0'
+};
+
+static const char base64_pad = '=';
+
+static const short base64_reverse_table[256] = {
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -2, -2, -1, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, 62, -2, -2, -2, 63,
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -2, -2, -2, -2, -2, -2,
+    -2,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -2, -2, -2, -2, -2,
+    -2, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2
+};
+
 using namespace std;
+
 %}
 
 %include "../include/std_string.i"
@@ -37,6 +88,7 @@ using namespace std;
 %include "../include/typemaps.i"
 
 %{
+
 static std::unordered_map<std::string, aerospike *> _mAerospikeWP; 
 int aerospike_php_connect( char *as_hosts, int as_port, int as_timeout ) {
 
@@ -123,7 +175,114 @@ int as_string_len(const as_val * v) {
 
 }
 
-void php_var_serialize(smart_str *buf, zval *struc, php_serialize_data_t *data);
+zend_string *php_base64_encode(const unsigned char *str, size_t length) {
+    const unsigned char *current = str;
+    unsigned char *p;
+    zend_string *result;
+
+    result = zend_string_safe_alloc(((length + 2) / 3), 4 * sizeof(char), 0, 0);
+    p = (unsigned char *)ZSTR_VAL(result);
+
+    while (length > 2) { /* keep going until we have less than 24 bits */
+        *p++ = base64_table[current[0] >> 2];
+        *p++ = base64_table[((current[0] & 0x03) << 4) + (current[1] >> 4)];
+        *p++ = base64_table[((current[1] & 0x0f) << 2) + (current[2] >> 6)];
+        *p++ = base64_table[current[2] & 0x3f];
+
+        current += 3;
+        length -= 3; /* we just handle 3 octets of data */
+    }
+
+    /* now deal with the tail end of things */
+    if (length != 0) {
+        *p++ = base64_table[current[0] >> 2];
+        if (length > 1) {
+            *p++ = base64_table[((current[0] & 0x03) << 4) + (current[1] >> 4)];
+            *p++ = base64_table[(current[1] & 0x0f) << 2];
+            *p++ = base64_pad;
+        } else {
+            *p++ = base64_table[(current[0] & 0x03) << 4];
+            *p++ = base64_pad;
+            *p++ = base64_pad;
+        }
+    }
+    *p = '\0';
+
+    ZSTR_LEN(result) = (p - (unsigned char *)ZSTR_VAL(result));
+
+    return result;
+}
+
+zend_string *php_base64_decode_ex(const unsigned char *str, size_t length, zend_bool strict) {
+    const unsigned char *current = str;
+    int ch, i = 0, j = 0, padding = 0;
+    zend_string *result;
+
+    result = zend_string_alloc(length, 0);
+
+    /* run through the whole string, converting as we go */
+    while (length-- > 0) {
+        ch = *current++;
+        if (ch == base64_pad) {
+            padding++;
+            continue;
+        }
+
+        ch = base64_reverse_table[ch];
+        if (!strict) {
+            /* skip unknown characters and whitespace */
+            if (ch < 0) {
+                continue;
+            }
+        } else {
+            /* skip whitespace */
+            if (ch == -1) {
+                continue;
+            }
+            /* fail on bad characters or if any data follows padding */
+            if (ch == -2 || padding) {
+                goto fail;
+            }
+        }
+
+        switch(i % 4) {
+        case 0:
+            ZSTR_VAL(result)[j] = ch << 2;
+            break;
+        case 1:
+            ZSTR_VAL(result)[j++] |= ch >> 4;
+            ZSTR_VAL(result)[j] = (ch & 0x0f) << 4;
+            break;
+        case 2:
+            ZSTR_VAL(result)[j++] |= ch >>2;
+            ZSTR_VAL(result)[j] = (ch & 0x03) << 6;
+            break;
+        case 3:
+            ZSTR_VAL(result)[j++] |= ch;
+            break;
+        }
+        i++;
+    }
+    /* fail if the input is truncated (only one char in last group) */
+    if (strict && i % 4 == 1) {
+        goto fail;
+    }
+    /* fail if the padding length is wrong (not VV==, VVV=), but accept zero padding
+     * RFC 4648: "In some circumstances, the use of padding [--] is not required" */
+    if (strict && padding && (padding > 2 || (i + padding) % 4 != 0)) {
+        goto fail;
+    }
+
+    ZSTR_LEN(result) = j;
+    ZSTR_VAL(result)[ZSTR_LEN(result)] = '\0';
+
+    return result;
+
+fail:
+    zend_string_free(result);
+    return NULL;
+}
+
 
 // AerospikeWP Class
 AerospikeWP::AerospikeWP( char *as_hosts, int as_port, int as_timeout ) {
@@ -189,11 +348,12 @@ vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 		        }
 
 				AS_DATA Values;
-				Values.typeId			= WP_STRING;
+				Values.typeId			= WP_BYTES;
                 Values.keyName          = bin_name;
 				Values.strValue			= reinterpret_cast<char*>(as_bytes_get(bytes_val));
+                Values.size             = nSize;
                 (*vResult).push_back( Values );
-
+                 
 			} else if ( nValueType == AS_STRING ) {
 
 				size_t nSize			= as_string_len( value );
@@ -225,6 +385,7 @@ vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
                 (*vResult).push_back( Values );
 
 			} else {
+                //
 			}
 
 		}
@@ -256,36 +417,27 @@ int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_m
 
     std::vector<AS_DATA>::iterator it;
     for( it = input_map.begin( ); it != input_map.end( ); ++it ) {
-        switch( it->typeId ) {
-            case WP_NULL:
-                as_record_set_nil( &rec, it->keyName.c_str() );
-                cout << "as_record_set_nil = " << it->keyName << endl;
-                break; 
-            case WP_TRUE:
-                as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(1) );
-                cout << "as_record_get_integer = " << it->keyName << ", v = 1" << endl;
-                break; 
-            case WP_FALSE:
-                as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(0) );
-                cout << "as_record_get_integer = " << it->keyName << ", v = 0" << endl;
-                break; 
-            case WP_LONG:
-                as_record_set_int64( &rec, it->keyName.c_str(), it->intValue ); 
-                cout << "as_record_get_int64 = " << it->keyName << ", v = " << it->intValue << endl;
-                break;
-            case WP_DOUBLE:
-                as_record_set_double( &rec, it->keyName.c_str(), it->doubleValue ); 
-                cout << "as_record_set_double = " << it->keyName << ", v = " << it->doubleValue << endl;
-                break;
-            case WP_STRING:
-                as_record_set_str( &rec, it->keyName.c_str(), it->strValue.c_str() );
-                cout << "as_record_set_string = " << it->keyName << ", v = " << it->strValue << endl;
-                break;
-            default:
-                // static const uint8_t bytes[] = { 1, 2, 3 };
-                // as_record_set_raw(&rec, "test-bin-4", bytes, 3);
-                cout << "key = " << it->keyName << ", type = " << it->typeId << ", value = " << it->strValue << endl;
-                break;
+
+        if ( it->typeId == IS_NULL ) {
+            as_record_set_nil( &rec, it->keyName.c_str() );
+        } else if ( it->typeId == IS_TRUE ) {
+            as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(1) );
+        } else if ( it->typeId == IS_FALSE ) {
+            as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(0) );
+        } else if ( it->typeId == IS_LONG ) {
+            as_record_set_int64( &rec, it->keyName.c_str(), (int64_t)Z_LVAL_P(it->val) ); 
+        } else if ( it->typeId == IS_DOUBLE ) {
+            as_record_set_double( &rec, it->keyName.c_str(), (double)Z_DVAL_P(it->val) ); 
+        } else if ( it->typeId == IS_STRING ) {
+
+            zend_string *str        = php_base64_encode( (unsigned char*)Z_STRVAL_P(it->val), Z_STRLEN_P(it->val));
+            as_record_set_str( &rec, it->keyName.c_str(), str->val );
+            zend_string_free(str);
+
+        } else if ( it->typeId == WP_ARRAY ) {
+            // not support
+        } else if ( it->typeId == WP_OBJECT ) {
+            // not support
         }
     }
 
@@ -302,6 +454,7 @@ int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_m
 
 %}
 
+// input
 %typemap(in) vDataList & {
 
     zval *arg;
@@ -324,51 +477,25 @@ int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_m
     zval *data;
     const HashTable *array  = HASH_OF(z_array);
 
-    ZEND_HASH_FOREACH_STR_KEY_VAL(array, key, data) {
+    ZEND_HASH_FOREACH_STR_KEY_VAL(array, key, data TSRMLS_DC) {
 
         const char* key_char    = ZSTR_VAL(key);
         const zend_uchar zRet   = Z_TYPE_P(data);
 
-        AS_DATA Values;
-        Values.keyName          = key_char;
-        if ( zRet == IS_TRUE ) {
-            Values.typeId           = WP_TRUE;
-            mData.push_back( Values );
-        } else if ( zRet == IS_FALSE ) {
-            Values.typeId           = WP_FALSE;
-            mData.push_back( Values );
-        } else if ( zRet == IS_STRING ) {
-            Values.typeId           = WP_STRING;
-            Values.strValue         = Z_STRVAL_P(data);
-            mData.push_back( Values );
-        } else if ( zRet == IS_LONG ) {
-            Values.typeId           = WP_LONG;
-            Values.intValue         = (int64_t)Z_LVAL_P(data);
-            mData.push_back( Values );
-        } else if ( zRet == IS_DOUBLE ) {
-            Values.typeId           = WP_DOUBLE;
-            Values.doubleValue      = (double)Z_DVAL_P(data);
-            mData.push_back( Values );
-        } else if ( zRet == IS_NULL ) {
-            Values.typeId           = WP_NULL;
-            mData.push_back( Values );
-        } else if ( zRet == IS_ARRAY ) {
-            //php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP ARRAY Type is Not Support. Ignore it.");
-            smart_str buf = {0};
-            php_serialize_data_t var_hash;
-            PHP_VAR_SERIALIZE_INIT(var_hash);
-            php_var_serialize(&buf, data, &var_hash);
-            PHP_VAR_SERIALIZE_DESTROY(var_hash);
-            cout << buf.s->val << endl;
-            smart_str_free(&buf);
-
-        } else if ( zRet == IS_OBJECT ) {
-            // php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP OBJECT Type is Not Support. Ignore it.");
-
+        if ( zRet == IS_ARRAY ) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP ARRAY Type is Not Support. Ignore it.");
         } else if ( zRet == IS_RESOURCE ) {
             php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP RESOURCE Type is Not Support. Ignore it.");
         } else if ( zRet == IS_REFERENCE ) {
             php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP REFERENCE Type is Not Support. Ignore it.");
+        } else if ( zRet == IS_OBJECT ) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP RESOURCE Type is Not Support. Ignore it.");
+        } else {
+            AS_DATA Values;
+            Values.keyName              = key_char;
+            Values.typeId               = zRet;
+            Values.val                  = data;
+            mData.push_back( Values );
         }
 
     } ZEND_HASH_FOREACH_END();
@@ -376,6 +503,7 @@ int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_m
     $1 = &mData;
 }
 
+// output
 %typemap(out) vDataList * {
 
     vDataList::iterator iter = $1->begin();
@@ -384,7 +512,9 @@ int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_m
     array_init(return_value);
     for (; iter != end; ++iter) {
 		if ( iter->typeId == WP_STRING ) {
-        	add_assoc_string(return_value, iter->keyName.c_str(), (char *)iter->strValue.c_str() );
+            zend_bool strict = 0;
+            zend_string *result = php_base64_decode_ex( (unsigned char*)iter->strValue.c_str(), iter->strValue.size(), strict );
+        	add_assoc_string(return_value, iter->keyName.c_str(), result->val );
 		} else if ( iter->typeId == WP_LONG ) {
         	add_assoc_long(return_value, iter->keyName.c_str(), (int)iter->intValue );
 		} else if ( iter->typeId == WP_DOUBLE ) {

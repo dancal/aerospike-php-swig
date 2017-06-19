@@ -39,6 +39,12 @@ abstract class aerospike {
 
 	const WP_FALSE = WP_FALSE;
 
+	const WP_ARRAY = WP_ARRAY;
+
+	const WP_OBJECT = WP_OBJECT;
+
+	const WP_BYTES = WP_BYTES;
+
 	const WP_NULL = WP_NULL;
 }
 

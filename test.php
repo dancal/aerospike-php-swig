@@ -19,20 +19,30 @@ $rData["DOUBLE2"]	= 3.15;
 $rData["TRUE"]		= true;
 $rData["FALSE"]		= false;
 $rData["NULL"]		= null;
-$rData["STRING1"]	= "s1";
+$rData["STRING1"]	= "s111111111111111";
 $rData["STRING2"]	= "s12";
-$rData["STRING3"]	= "s123";
+$rData["STRING3"]	= "s1231";
 $rData["STRING4"]	= "s1234";
 $rData["STRING5"]	= "s12345";
-$rData["INTEGER"]	= 111;
-//$rData["BYTE"]		= new \Aerospike\Bytes( byteStr2byteArray('The quick fox jumped over the lazy brown dog') );
-$rData["ARRAY"]		= array('1','2'); 
+$rData["INTEGER1"]	= 111;
+//$rData["INTEGER2"]	= 222;
+//$rData["INTEGER3"]	= 333;
+//$rData["bin"]		= null;
+//$rData['BYTE_STRING']	= null;
+//$rData["BYTE"]		= new \Aerospike\Bytes( 'The quick fox jumped over the lazy brown dog' );
+//$rData["BYTE"]		= null;
+//$rData["ARRAY"]		= null;
+$rData["ARRAY"]		= byteStr2byteArray('The quick fox jumped over the lazy brown dog');
+$rData["ARRAY1"]		= gzdeflate('test stroing asfdjoiasjf io jasfdioasjfio aasfjioasdfjioas jasfiosafdjio');
+$rData["ARRAY2"]		= gzdeflate('test stroing asfdjoiasjf io jasfdioasjfio aasfjioasdfjioas jasfiosafdjio');
+//$rData["ARRAY4"]		= file_get_contents("aerospike_wrap.o");
+//$rData["ARRAY3"]		= null;
 //$rData["OBJECT"]	= new stdclass();
 
 $nRet				= $aero->put( "viewer", "COOKIE", "test", $rData );
-echo "put = $nRet\n";
-var_dump( $aero->get('viewer', "COOKIE", 'test') );
-//var_dump( $rData );
+$rData				= $aero->get('viewer', "COOKIE", 'test') ;
+
+echo gzinflate( $rData['ARRAY1'] ). "\n";
 
 /*
 var_dump( $aero->get('viewer', "COOKIE", 'f8cea446f3dd59f82a35b3844556dfee') );

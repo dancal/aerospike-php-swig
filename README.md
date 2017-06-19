@@ -1,10 +1,17 @@
 
-# PHP7, PHP7-FPM 전용 aerospike 모듈
+# PHP7, PHP7-FPM aerospike module
+
+
+
+# Do not Use this. just test module.
+
+
+
 
 # Install
 
 ##
-	apt-get install libphp7.0-embed
+	// apt-get install libphp7.0-embed
 
 ## SWIG
 

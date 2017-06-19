@@ -1001,8 +1001,9 @@ static void SWIG_Php_SetModule(swig_module_info *pointer) {
 #define SWIGTYPE_p_AerospikeWP swig_types[2]
 #define SWIGTYPE_p_int64_t swig_types[3]
 #define SWIGTYPE_p_std__vectorT_AS_DATA_t swig_types[4]
-static swig_type_info *swig_types[6];
-static swig_module_info swig_module = {swig_types, 5, 0, 0, 0, 0};
+#define SWIGTYPE_p_zval swig_types[5]
+static swig_type_info *swig_types[7];
+static swig_module_info swig_module = {swig_types, 6, 0, 0, 0, 0};
 #define SWIG_TypeQuery(name) SWIG_TypeQueryModule(&swig_module, &swig_module, name)
 #define SWIG_MangledTypeQuery(name) SWIG_MangledTypeQueryModule(&swig_module, &swig_module, name)
 
@@ -1075,31 +1076,82 @@ extern "C" {
 #endif
 
 
+#include <fstream>
+#include <sstream>
 #include <iostream>
 #include <vector>
 #include <memory>
 #include <map>
 #include <unordered_map>
 
+#include <boost/algorithm/string/classification.hpp> // Include boost::for is_any_of
+#include <boost/algorithm/string/split.hpp> // Include for boost::split
+
 #include <aerospike/aerospike.h>
 #include <aerospike/aerospike_key.h>
 #include <aerospike/aerospike_batch.h>
 #include <aerospike/as_record.h>
 #include <aerospike/as_record_iterator.h>
+#include <aerospike/as_bytes.h>
+#include <aerospike/as_status.h>
+#include <aerospike/as_config.h>
+
 
 #include <php.h>
-#include <php_ini.h>
 #include <zend_types.h>
 #include <zend_operators.h>
 #include <zend_smart_str.h>
+
+#include "zend.h"
+#include "zend_globals.h"
+#include "zend_variables.h"
+#include "zend_API.h"
+#include "zend_objects.h"
+#include "zend_object_handlers.h"
+
 #include <ext/standard/php_var.h>
 #include <ext/standard/php_string.h>
 #include <ext/standard/basic_functions.h>
 #include <ext/standard/php_incomplete_class.h>
+#include <ext/standard/base64.h>
 
+#include "../include/base64.hpp"
 #include "../include/aerospike.hpp"
 
+#define AS_BYTECLASS   "Aerospike\\Bytes"
+
+/* {{{ base64 tables */
+static const char base64_table[] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/', '\0'
+};
+
+static const char base64_pad = '=';
+
+static const short base64_reverse_table[256] = {
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -1, -1, -2, -2, -1, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -1, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, 62, -2, -2, -2, 63,
+    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -2, -2, -2, -2, -2, -2,
+    -2,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -2, -2, -2, -2, -2,
+    -2, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2,
+    -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2
+};
+
 using namespace std;
+
 
 
 #include "zend_exceptions.h"
@@ -1124,6 +1176,7 @@ using namespace std;
 
 #include <vector>
 #include <stdexcept>
+
 
 
 static std::unordered_map<std::string, aerospike *> _mAerospikeWP; 
@@ -1212,7 +1265,114 @@ int as_string_len(const as_val * v) {
 
 }
 
-void php_var_serialize(smart_str *buf, zval *struc, php_serialize_data_t *data);
+zend_string *php_base64_encode(const unsigned char *str, size_t length) {
+    const unsigned char *current = str;
+    unsigned char *p;
+    zend_string *result;
+
+    result = zend_string_safe_alloc(((length + 2) / 3), 4 * sizeof(char), 0, 0);
+    p = (unsigned char *)ZSTR_VAL(result);
+
+    while (length > 2) { /* keep going until we have less than 24 bits */
+        *p++ = base64_table[current[0] >> 2];
+        *p++ = base64_table[((current[0] & 0x03) << 4) + (current[1] >> 4)];
+        *p++ = base64_table[((current[1] & 0x0f) << 2) + (current[2] >> 6)];
+        *p++ = base64_table[current[2] & 0x3f];
+
+        current += 3;
+        length -= 3; /* we just handle 3 octets of data */
+    }
+
+    /* now deal with the tail end of things */
+    if (length != 0) {
+        *p++ = base64_table[current[0] >> 2];
+        if (length > 1) {
+            *p++ = base64_table[((current[0] & 0x03) << 4) + (current[1] >> 4)];
+            *p++ = base64_table[(current[1] & 0x0f) << 2];
+            *p++ = base64_pad;
+        } else {
+            *p++ = base64_table[(current[0] & 0x03) << 4];
+            *p++ = base64_pad;
+            *p++ = base64_pad;
+        }
+    }
+    *p = '\0';
+
+    ZSTR_LEN(result) = (p - (unsigned char *)ZSTR_VAL(result));
+
+    return result;
+}
+
+zend_string *php_base64_decode_ex(const unsigned char *str, size_t length, zend_bool strict) {
+    const unsigned char *current = str;
+    int ch, i = 0, j = 0, padding = 0;
+    zend_string *result;
+
+    result = zend_string_alloc(length, 0);
+
+    /* run through the whole string, converting as we go */
+    while (length-- > 0) {
+        ch = *current++;
+        if (ch == base64_pad) {
+            padding++;
+            continue;
+        }
+
+        ch = base64_reverse_table[ch];
+        if (!strict) {
+            /* skip unknown characters and whitespace */
+            if (ch < 0) {
+                continue;
+            }
+        } else {
+            /* skip whitespace */
+            if (ch == -1) {
+                continue;
+            }
+            /* fail on bad characters or if any data follows padding */
+            if (ch == -2 || padding) {
+                goto fail;
+            }
+        }
+
+        switch(i % 4) {
+        case 0:
+            ZSTR_VAL(result)[j] = ch << 2;
+            break;
+        case 1:
+            ZSTR_VAL(result)[j++] |= ch >> 4;
+            ZSTR_VAL(result)[j] = (ch & 0x0f) << 4;
+            break;
+        case 2:
+            ZSTR_VAL(result)[j++] |= ch >>2;
+            ZSTR_VAL(result)[j] = (ch & 0x03) << 6;
+            break;
+        case 3:
+            ZSTR_VAL(result)[j++] |= ch;
+            break;
+        }
+        i++;
+    }
+    /* fail if the input is truncated (only one char in last group) */
+    if (strict && i % 4 == 1) {
+        goto fail;
+    }
+    /* fail if the padding length is wrong (not VV==, VVV=), but accept zero padding
+     * RFC 4648: "In some circumstances, the use of padding [--] is not required" */
+    if (strict && padding && (padding > 2 || (i + padding) % 4 != 0)) {
+        goto fail;
+    }
+
+    ZSTR_LEN(result) = j;
+    ZSTR_VAL(result)[ZSTR_LEN(result)] = '\0';
+
+    return result;
+
+fail:
+    zend_string_free(result);
+    return NULL;
+}
+
 
 // AerospikeWP Class
 AerospikeWP::AerospikeWP( char *as_hosts, int as_port, int as_timeout ) {
@@ -1278,11 +1438,12 @@ vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
 		        }
 
 				AS_DATA Values;
-				Values.typeId			= WP_STRING;
+				Values.typeId			= WP_BYTES;
                 Values.keyName          = bin_name;
 				Values.strValue			= reinterpret_cast<char*>(as_bytes_get(bytes_val));
+                Values.size             = nSize;
                 (*vResult).push_back( Values );
-
+                 
 			} else if ( nValueType == AS_STRING ) {
 
 				size_t nSize			= as_string_len( value );
@@ -1314,6 +1475,7 @@ vDataList *AerospikeWP::get( char *nspace, char *set, char *key_str ) {
                 (*vResult).push_back( Values );
 
 			} else {
+                //
 			}
 
 		}
@@ -1345,36 +1507,27 @@ int AerospikeWP::put( char *nspace, char *set, char *key_str, vDataList &input_m
 
     std::vector<AS_DATA>::iterator it;
     for( it = input_map.begin( ); it != input_map.end( ); ++it ) {
-        switch( it->typeId ) {
-            case WP_NULL:
-                as_record_set_nil( &rec, it->keyName.c_str() );
-                cout << "as_record_set_nil = " << it->keyName << endl;
-                break; 
-            case WP_TRUE:
-                as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(1) );
-                cout << "as_record_get_integer = " << it->keyName << ", v = 1" << endl;
-                break; 
-            case WP_FALSE:
-                as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(0) );
-                cout << "as_record_get_integer = " << it->keyName << ", v = 0" << endl;
-                break; 
-            case WP_LONG:
-                as_record_set_int64( &rec, it->keyName.c_str(), it->intValue ); 
-                cout << "as_record_get_int64 = " << it->keyName << ", v = " << it->intValue << endl;
-                break;
-            case WP_DOUBLE:
-                as_record_set_double( &rec, it->keyName.c_str(), it->doubleValue ); 
-                cout << "as_record_set_double = " << it->keyName << ", v = " << it->doubleValue << endl;
-                break;
-            case WP_STRING:
-                as_record_set_str( &rec, it->keyName.c_str(), it->strValue.c_str() );
-                cout << "as_record_set_string = " << it->keyName << ", v = " << it->strValue << endl;
-                break;
-            default:
-                // static const uint8_t bytes[] = { 1, 2, 3 };
-                // as_record_set_raw(&rec, "test-bin-4", bytes, 3);
-                cout << "key = " << it->keyName << ", type = " << it->typeId << ", value = " << it->strValue << endl;
-                break;
+
+        if ( it->typeId == IS_NULL ) {
+            as_record_set_nil( &rec, it->keyName.c_str() );
+        } else if ( it->typeId == IS_TRUE ) {
+            as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(1) );
+        } else if ( it->typeId == IS_FALSE ) {
+            as_record_set_integer( &rec, it->keyName.c_str(), as_integer_new(0) );
+        } else if ( it->typeId == IS_LONG ) {
+            as_record_set_int64( &rec, it->keyName.c_str(), (int64_t)Z_LVAL_P(it->val) ); 
+        } else if ( it->typeId == IS_DOUBLE ) {
+            as_record_set_double( &rec, it->keyName.c_str(), (double)Z_DVAL_P(it->val) ); 
+        } else if ( it->typeId == IS_STRING ) {
+
+            zend_string *str        = php_base64_encode( (unsigned char*)Z_STRVAL_P(it->val), Z_STRLEN_P(it->val));
+            as_record_set_str( &rec, it->keyName.c_str(), str->val );
+            zend_string_free(str);
+
+        } else if ( it->typeId == WP_ARRAY ) {
+            // not support
+        } else if ( it->typeId == WP_OBJECT ) {
+            // not support
         }
     }
 
@@ -1398,6 +1551,7 @@ static swig_type_info _swigt__p_AS_DATA = {"_p_AS_DATA", "AS_DATA *", 0, 0, (voi
 static swig_type_info _swigt__p_AerospikeWP = {"_p_AerospikeWP", "AerospikeWP *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_int64_t = {"_p_int64_t", "int64_t *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_std__vectorT_AS_DATA_t = {"_p_std__vectorT_AS_DATA_t", "vDataList *|std::vector< AS_DATA > *", 0, 0, (void*)0, 0};
+static swig_type_info _swigt__p_zval = {"_p_zval", "zval *", 0, 0, (void*)0, 0};
 
 static swig_type_info *swig_type_initial[] = {
   &_swigt__int,
@@ -1405,6 +1559,7 @@ static swig_type_info *swig_type_initial[] = {
   &_swigt__p_AerospikeWP,
   &_swigt__p_int64_t,
   &_swigt__p_std__vectorT_AS_DATA_t,
+  &_swigt__p_zval,
 };
 
 static swig_cast_info _swigc__int[] = {  {&_swigt__int, 0, 0, 0},{0, 0, 0, 0}};
@@ -1412,6 +1567,7 @@ static swig_cast_info _swigc__p_AS_DATA[] = {  {&_swigt__p_AS_DATA, 0, 0, 0},{0,
 static swig_cast_info _swigc__p_AerospikeWP[] = {  {&_swigt__p_AerospikeWP, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_int64_t[] = {  {&_swigt__p_int64_t, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_std__vectorT_AS_DATA_t[] = {  {&_swigt__p_std__vectorT_AS_DATA_t, 0, 0, 0},{0, 0, 0, 0}};
+static swig_cast_info _swigc__p_zval[] = {  {&_swigt__p_zval, 0, 0, 0},{0, 0, 0, 0}};
 
 static swig_cast_info *swig_cast_initial[] = {
   _swigc__int,
@@ -1419,6 +1575,7 @@ static swig_cast_info *swig_cast_initial[] = {
   _swigc__p_AerospikeWP,
   _swigc__p_int64_t,
   _swigc__p_std__vectorT_AS_DATA_t,
+  _swigc__p_zval,
 };
 
 
@@ -1429,13 +1586,14 @@ static swig_cast_info *swig_cast_initial[] = {
 static int le_swig__int=0; /* handle for _int */
 static int le_swig__p_AS_DATA=0; /* handle for AS_DATA */
 static int le_swig__p_int64_t=0; /* handle for _p_int64_t */
+static int le_swig__p_zval=0; /* handle for _p_zval */
 static int le_swig__p_std__vectorT_AS_DATA_t=0; /* handle for _p_std__vectorT_AS_DATA_t */
 static int le_swig__p_AerospikeWP=0; /* handle for AerospikeWP */
 /* end vdecl subsection */
 /* wrapper section */
 ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_set) {
   AS_DATA *arg1 = (AS_DATA *) 0 ;
-  enum TypeID arg2 ;
+  short arg2 ;
   zval args[2];
   
   SWIG_ResetError();
@@ -1451,7 +1609,7 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_set) {
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
   
   /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,6,CONVERT_INT_IN@*/
-  arg2 = (enum TypeID) zval_get_long(&args[1]);
+  arg2 = (short) zval_get_long(&args[1]);
   /*@SWIG@*/;
   
   if (arg1) (arg1)->typeId = arg2;
@@ -1466,7 +1624,7 @@ fail:
 ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_get) {
   AS_DATA *arg1 = (AS_DATA *) 0 ;
   zval args[1];
-  enum TypeID result;
+  short result;
   
   SWIG_ResetError();
   if(ZEND_NUM_ARGS() != 1 || zend_get_parameters_array_ex(1, args) != SUCCESS) {
@@ -1479,9 +1637,9 @@ ZEND_NAMED_FUNCTION(_wrap_AS_DATA_typeId_get) {
   }
   
   if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
-  result = (enum TypeID) ((arg1)->typeId);
+  result = (short) ((arg1)->typeId);
   
-  RETVAL_LONG((long)result);
+  RETVAL_LONG(result);
   
 thrown:
   return;
@@ -1725,6 +1883,120 @@ fail:
 }
 
 
+ZEND_NAMED_FUNCTION(_wrap_AS_DATA_val_set) {
+  AS_DATA *arg1 = (AS_DATA *) 0 ;
+  zval *arg2 = (zval *) 0 ;
+  zval args[2];
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 2 || zend_get_parameters_array_ex(2, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AS_DATA, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AS_DATA_val_set. Expected SWIGTYPE_p_AS_DATA");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  
+  if (SWIG_ConvertPtr(&args[1], (void **) &arg2, SWIGTYPE_p_zval, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 2 of AS_DATA_val_set. Expected SWIGTYPE_p_zval");
+  }
+  
+  if (arg1) (arg1)->val = arg2;
+  
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
+ZEND_NAMED_FUNCTION(_wrap_AS_DATA_val_get) {
+  AS_DATA *arg1 = (AS_DATA *) 0 ;
+  zval args[1];
+  zval *result = 0 ;
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 1 || zend_get_parameters_array_ex(1, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AS_DATA, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AS_DATA_val_get. Expected SWIGTYPE_p_AS_DATA");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  result = (zval *) ((arg1)->val);
+  
+  SWIG_SetPointerZval(return_value, (void *)result, SWIGTYPE_p_zval, 0);
+  
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
+ZEND_NAMED_FUNCTION(_wrap_AS_DATA_size_set) {
+  AS_DATA *arg1 = (AS_DATA *) 0 ;
+  int arg2 ;
+  zval args[2];
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 2 || zend_get_parameters_array_ex(2, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AS_DATA, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AS_DATA_size_set. Expected SWIGTYPE_p_AS_DATA");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  
+  /*@SWIG:/usr/local/share/swig/4.0.0/php/utils.i,6,CONVERT_INT_IN@*/
+  arg2 = (int) zval_get_long(&args[1]);
+  /*@SWIG@*/;
+  
+  if (arg1) (arg1)->size = arg2;
+  
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
+ZEND_NAMED_FUNCTION(_wrap_AS_DATA_size_get) {
+  AS_DATA *arg1 = (AS_DATA *) 0 ;
+  zval args[1];
+  int result;
+  
+  SWIG_ResetError();
+  if(ZEND_NUM_ARGS() != 1 || zend_get_parameters_array_ex(1, args) != SUCCESS) {
+    WRONG_PARAM_COUNT;
+  }
+  
+  
+  if (SWIG_ConvertPtr(&args[0], (void **) &arg1, SWIGTYPE_p_AS_DATA, 0) < 0) {
+    SWIG_PHP_Error(E_ERROR, "Type error in argument 1 of AS_DATA_size_get. Expected SWIGTYPE_p_AS_DATA");
+  }
+  
+  if(!arg1) SWIG_PHP_Error(E_ERROR, "this pointer is NULL");
+  result = (int) ((arg1)->size);
+  
+  RETVAL_LONG(result);
+  
+thrown:
+  return;
+fail:
+  SWIG_FAIL();
+}
+
+
 ZEND_NAMED_FUNCTION(_wrap_new_AS_DATA) {
   AS_DATA *result = 0 ;
   
@@ -1958,7 +2230,9 @@ ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_get) {
     array_init(return_value);
     for (; iter != end; ++iter) {
       if ( iter->typeId == WP_STRING ) {
-        add_assoc_string(return_value, iter->keyName.c_str(), (char *)iter->strValue.c_str() );
+        zend_bool strict = 0;
+        zend_string *result = php_base64_decode_ex( (unsigned char*)iter->strValue.c_str(), iter->strValue.size(), strict );
+        add_assoc_string(return_value, iter->keyName.c_str(), result->val );
       } else if ( iter->typeId == WP_LONG ) {
         add_assoc_long(return_value, iter->keyName.c_str(), (int)iter->intValue );
       } else if ( iter->typeId == WP_DOUBLE ) {
@@ -2051,52 +2325,24 @@ ZEND_NAMED_FUNCTION(_wrap_AerospikeWP_put) {
     zval *data;
     const HashTable *array  = HASH_OF(z_array);
     
-    ZEND_HASH_FOREACH_STR_KEY_VAL(array, key, data) {
+    ZEND_HASH_FOREACH_STR_KEY_VAL(array, key, data TSRMLS_DC) {
       const char* key_char    = ZSTR_VAL(key);
       const zend_uchar zRet   = Z_TYPE_P(data);
       
-      AS_DATA Values;
-      Values.keyName          = key_char;
-      if ( zRet == IS_TRUE ) {
-        Values.typeId           = WP_TRUE;
-        mData.push_back( Values );
-      } else if ( zRet == IS_FALSE ) {
-        Values.typeId           = WP_FALSE;
-        mData.push_back( Values );
-      } else if ( zRet == IS_STRING ) {
-        Values.typeId           = WP_STRING;
-        Values.strValue         = Z_STRVAL_P(data);
-        mData.push_back( Values );
-      } else if ( zRet == IS_LONG ) {
-        Values.typeId           = WP_LONG;
-        Values.intValue         = (int64_t)Z_LVAL_P(data);
-        mData.push_back( Values );
-      } else if ( zRet == IS_DOUBLE ) {
-        Values.typeId           = WP_DOUBLE;
-        Values.doubleValue      = (double)Z_DVAL_P(data);
-        mData.push_back( Values );
-      } else if ( zRet == IS_NULL ) {
-        Values.typeId           = WP_NULL;
-        mData.push_back( Values );
-      } else if ( zRet == IS_ARRAY ) {
-        //php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP ARRAY Type is Not Support. Ignore it.");
-        smart_str buf = {
-          0
-        };
-        php_serialize_data_t var_hash;
-        PHP_VAR_SERIALIZE_INIT(var_hash);
-        php_var_serialize(&buf, data, &var_hash);
-        PHP_VAR_SERIALIZE_DESTROY(var_hash);
-        cout << buf.s->val << endl;
-        smart_str_free(&buf);
-        
-      } else if ( zRet == IS_OBJECT ) {
-        // php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP OBJECT Type is Not Support. Ignore it.");
-        
+      if ( zRet == IS_ARRAY ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP ARRAY Type is Not Support. Ignore it.");
       } else if ( zRet == IS_RESOURCE ) {
         php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP RESOURCE Type is Not Support. Ignore it.");
       } else if ( zRet == IS_REFERENCE ) {
         php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP REFERENCE Type is Not Support. Ignore it.");
+      } else if ( zRet == IS_OBJECT ) {
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "PHP RESOURCE Type is Not Support. Ignore it.");
+      } else {
+        AS_DATA Values;
+        Values.keyName              = key_char;
+        Values.typeId               = zRet;
+        Values.val                  = data;
+        mData.push_back( Values );
       }
       
     } ZEND_HASH_FOREACH_END();
@@ -2224,6 +2470,10 @@ static zend_function_entry aerospike_functions[] = {
  SWIG_ZEND_NAMED_FE(as_data_strvalue_get,_wrap_AS_DATA_strValue_get,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(as_data_keyname_set,_wrap_AS_DATA_keyName_set,swig_arginfo_00)
  SWIG_ZEND_NAMED_FE(as_data_keyname_get,_wrap_AS_DATA_keyName_get,swig_arginfo_0)
+ SWIG_ZEND_NAMED_FE(as_data_val_set,_wrap_AS_DATA_val_set,swig_arginfo_00)
+ SWIG_ZEND_NAMED_FE(as_data_val_get,_wrap_AS_DATA_val_get,swig_arginfo_0)
+ SWIG_ZEND_NAMED_FE(as_data_size_set,_wrap_AS_DATA_size_set,swig_arginfo_00)
+ SWIG_ZEND_NAMED_FE(as_data_size_get,_wrap_AS_DATA_size_get,swig_arginfo_0)
  SWIG_ZEND_NAMED_FE(new_as_data,_wrap_new_AS_DATA,swig_arginfo_)
  SWIG_ZEND_NAMED_FE(aerospikewp_host_key_set,_wrap_AerospikeWP_host_key_set,swig_arginfo_00)
  SWIG_ZEND_NAMED_FE(aerospikewp_host_key_get,_wrap_AerospikeWP_host_key_get,swig_arginfo_0)
@@ -2510,6 +2760,8 @@ le_swig__p_AS_DATA=zend_register_list_destructors_ex(_wrap_destroy_p_AS_DATA, NU
 SWIG_TypeClientData(SWIGTYPE_p_AS_DATA,&le_swig__p_AS_DATA);
 le_swig__p_int64_t=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL, SWIGTYPE_p_int64_t->name, module_number);
 SWIG_TypeClientData(SWIGTYPE_p_int64_t,&le_swig__p_int64_t);
+le_swig__p_zval=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL, SWIGTYPE_p_zval->name, module_number);
+SWIG_TypeClientData(SWIGTYPE_p_zval,&le_swig__p_zval);
 le_swig__p_std__vectorT_AS_DATA_t=zend_register_list_destructors_ex(_swig_default_rsrc_destroy, NULL, SWIGTYPE_p_std__vectorT_AS_DATA_t->name, module_number);
 SWIG_TypeClientData(SWIGTYPE_p_std__vectorT_AS_DATA_t,&le_swig__p_std__vectorT_AS_DATA_t);
 le_swig__p_AerospikeWP=zend_register_list_destructors_ex(_wrap_destroy_p_AerospikeWP, NULL, SWIGTYPE_p_AerospikeWP->name, module_number);
@@ -2524,6 +2776,9 @@ SWIG_LONG_CONSTANT(WP_DOUBLE, (int)WP_DOUBLE);
 SWIG_LONG_CONSTANT(WP_STRING, (int)WP_STRING);
 SWIG_LONG_CONSTANT(WP_TRUE, (int)WP_TRUE);
 SWIG_LONG_CONSTANT(WP_FALSE, (int)WP_FALSE);
+SWIG_LONG_CONSTANT(WP_ARRAY, (int)WP_ARRAY);
+SWIG_LONG_CONSTANT(WP_OBJECT, (int)WP_OBJECT);
+SWIG_LONG_CONSTANT(WP_BYTES, (int)WP_BYTES);
 SWIG_LONG_CONSTANT(WP_NULL, (int)WP_NULL);
 /* end cinit subsection */
 
